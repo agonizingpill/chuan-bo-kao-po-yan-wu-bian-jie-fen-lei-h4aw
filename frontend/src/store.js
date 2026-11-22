@@ -9,13 +9,15 @@ function restoreSession() {
   catch { return null; }
 }
 
-export const store = {session: restoreSession(), data: null, history: [], error: '', busy: false};
+export const store = {session: restoreSession(), data: null, history: [], error: '', busy: false, retime: {}};
 export const supervisor = () => store.session?.role === 'supervisor';
 export const canWrite = () => store.session && store.session.role !== 'viewer';
 
 export function setSession(session) {
   store.session = session;
   store.data = null;
+  store.retime = {};
+  store.retimeState = {};
   if (session) sessionStorage.setItem('berth-session', JSON.stringify(session));
   else sessionStorage.removeItem('berth-session');
 }

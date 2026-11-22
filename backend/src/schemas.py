@@ -70,6 +70,13 @@ class DispatchInput(Payload):
     instruction: Note
 
 
+class RetimeInput(Payload):
+    window_code: Code
+    tug_code: Code
+    instruction: Note
+    idempotency_key: str = Field(min_length=16, max_length=64, pattern=r'^[A-Za-z0-9-]+$')
+
+
 class CloseInput(Payload):
     all_fast_at: NaiveDatetime
     outcome: Note

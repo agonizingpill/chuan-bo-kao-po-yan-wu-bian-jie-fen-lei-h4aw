@@ -3,10 +3,10 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 
-from . import incidents, planning
+from . import incidents, planning, retime
 from .database import Session
 from .models import Audit, Berth, BerthRequest, DelayIncident, DispatchReview, Role, TideWindow, Tug, TugAssignment, User
-from .schemas import AssignTug, CloseInput, DispatchInput, IncidentInput, Login, MarginDecision, RequestInput, Schedule, TideInput
+from .schemas import AssignTug, CloseInput, DispatchInput, IncidentInput, Login, MarginDecision, RequestInput, RetimeInput, Schedule, TideInput
 from .security import current_user, permitted, token_for, valid_password
 
 router = APIRouter()
@@ -47,6 +47,8 @@ def watch(user: User = read):
             'assignments': [row(item) for item in db.scalars(select(TugAssignment).order_by(TugAssignment.starts_at))],
             'incidents': [row(item) for item in db.scalars(select(DelayIncident).order_by(DelayIncident.observed_at.desc()))],
             'reviews': [row(item) for item in db.scalars(select(DispatchReview).order_by(DispatchReview.issued_at.desc()))],
+            'retime_adoptions': [retime.adoption_view(item) for item in db.scalars(
+                select(retime.RetimeAdoption).order_by(retime.RetimeAdoption.adopted_at.desc()))],
         }
 
 
@@ -113,6 +115,20 @@ def retry_incident(code: str, user: User = supervise):
 def review_incident(code: str, data: MarginDecision, user: User = supervise):
     with Session.begin() as db:
         return row(incidents.review_margin(db, user.username, code, data))
+
+
+@router.get('/delay-incidents/{code}/retime')
+def retime_preview(code: str, user: User = read):
+    with Session() as db:
+        incident = planning.find(db, DelayIncident, code)
+        return retime.preview(db, incident)
+
+
+@router.post('/delay-incidents/{code}/retime', status_code=201)
+def adopt_retime(code: str, data: RetimeInput, user: User = supervise):
+    with Session.begin() as db:
+        adoption, review, replayed = retime.adopt(db, user.username, code, data)
+        return {'replayed': replayed, 'adoption': retime.adoption_view(adoption), 'review': row(review)}
 
 
 @router.post('/delay-incidents/{code}/dispatch', status_code=201)

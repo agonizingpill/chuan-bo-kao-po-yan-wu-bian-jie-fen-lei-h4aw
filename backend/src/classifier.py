@@ -46,17 +46,28 @@ def fit():
     return model, metrics
 
 
-def classify(features, expected_digest):
-    if set(features) != set(FEATURES) or snapshot_digest(features) != expected_digest:
-        raise ValueError('冻结输入不完整或摘要不一致')
+def evaluate(features):
+    if set(features) != set(FEATURES):
+        raise ValueError('输入特征不完整')
     row = np.array([[features[key] for key in FEATURES]], dtype=float)
     if not np.isfinite(row).all():
-        raise ValueError('冻结输入包含不可计算的数值')
+        raise ValueError('输入特征包含不可计算的数值')
     model, metrics = fit()
     score = float(model.decision_function(row)[0])
     return {
         'score': score, 'band': BAND, 'needs_review': abs(score) <= BAND,
         'prediction': 'priority' if score > 0 else 'routine',
-        'seed': SEED, 'input_digest': expected_digest, 'parameters': PARAMETERS,
-        'metrics': metrics, 'sklearn': sklearn.__version__,
+        'seed': SEED, 'parameters': PARAMETERS, 'metrics': metrics, 'sklearn': sklearn.__version__,
     }
+
+
+def classify(features, expected_digest):
+    if set(features) != set(FEATURES) or snapshot_digest(features) != expected_digest:
+        raise ValueError('冻结输入不完整或摘要不一致')
+    return {**evaluate(features), 'input_digest': expected_digest}
+
+
+def score(features):
+    """Score a hypothetical input (e.g. a retimed tide reserve) without a frozen digest."""
+    return {**evaluate(features), 'input_digest': snapshot_digest(features)}
+

@@ -1,5 +1,6 @@
+import {api} from './api.js';
 import {actions, canWrite, decisions, incidentStates, store, supervisor} from './store.js';
-import {blank, esc, field, form, journal, notes, pill, portDate, selectField, timeInput, title} from './ui.js';
+import {blank, esc, field, form, journal, nonce, notes, pill, portDate, selectField, timeInput, title} from './ui.js';
 
 const features = {eta_offset_min: '引航偏离 / 分钟', tide_reserve_min: '潮窗余量 / 分钟', wind_kn: '现场风速 / kn', tug_wait_min: '拖轮等候 / 分钟'};
 
@@ -25,6 +26,63 @@ function boundary(result) {
   <div class="axis-labels"><span>常规侧</span><b>±${band.toFixed(2)} 人工复核带</b><span>优先侧</span></div>
   <p class="model-note">模型建议 <strong>${esc(decisions[prediction])}</strong> · 合成验证集平衡准确率 ${(metrics.balanced_accuracy * 100).toFixed(1)}%</p>
   <details class="model-details"><summary>计算记录</summary><dl class="measurements"><div><dt>训练 / 验证</dt><dd>${metrics.train_rows} / ${metrics.validation_rows}</dd></div><div><dt>固定种子</dt><dd>${result.seed}</dd></div><div><dt>支持向量数</dt><dd>${metrics.support_vectors}</dd></div></dl><p class="digest">SHA-256 ${esc(result.input_digest)}</p></details></div>`;
+}
+
+function scoreText(value) {
+  return value === null || value === undefined ? '—' : `${value >= 0 ? '+' : '−'}${Math.abs(value).toFixed(4)}`;
+}
+
+export async function loadRetime(code) {
+  store.retimeState = store.retimeState || {};
+  if (store.retimeState[code] === 'loading') return store.retime[code];
+  store.retimeState[code] = 'loading';
+  try {
+    store.retime[code] = await api.retimePreview(code);
+  } catch (error) {
+    store.error = error.message;
+  } finally {
+    store.retimeState[code] = 'idle';
+  }
+  return store.retime[code];
+}
+
+function candidateRows(preview) {
+  return preview.candidates.map(row => {
+    const status = row.feasible ? (row.returns_routine ? '可行 · 回常规区' : row.needs_review ? '可行 · 仍贴近边界' : '可行 · 未回常规区') : '不可排';
+    const tag = row.recommended ? '<span class="pill ready">推荐</span>' : row.current ? '<span class="pill">当前</span>' : '';
+    return `<tr class="${row.recommended ? 'active-row' : ''}"><td><strong class="mono">${esc(row.window_code)}</strong> ${tag}<small>${esc(portDate(row.eta))}–${esc(portDate(row.ends_at))}</small></td>
+      <td>${esc(row.tide_reserve_min)} 分</td><td class="mono">${scoreText(row.score)}</td>
+      <td>${row.feasible ? esc(row.tugs.join(' / ')) : esc(row.issues.join('；'))}</td><td>${esc(status)}</td></tr>`;
+  }).join('');
+}
+
+function retimePanel(incident) {
+  if (!['ready', 'actioned', 'closed'].includes(incident.state) || incident.decision !== 'priority') return '';
+  const preview = store.retime[incident.code];
+  if (incident.state !== 'ready' && !preview?.adoption) return '';
+  const state = store.retimeState?.[incident.code];
+  const open = supervisor() ? `<div class="section-head"><h2>改期预演</h2><button type="button" class="text-button" data-click="retime-preview" data-code="${esc(incident.code)}">${state === 'loading' ? '正在试排…' : preview ? '重新试排' : '试排潮窗'}</button></div>`
+    : `<div class="section-head"><h2>改期预演</h2><span>只读</span></div>`;
+  if (!preview) return `<section class="boundary retime">${open}<p class="model-note">${state === 'loading' ? '正在按原观测试排各潮窗…' : '只替换潮窗余量重新评分，泊位与拖轮仍按原计划保留，采纳前不占用任何资源。'}</p></section>`;
+  if (state === 'loading') return `<section class="boundary retime">${open}<p class="model-note">正在按原观测试排各潮窗…</p></section>`;
+  if (preview.adoption) {
+    const a = preview.adoption;
+    const review = store.data.reviews.find(r => r.incident_code === incident.code);
+    return `<section class="boundary retime">${open}
+      <p class="clearance">已采纳 <strong>${esc(a.from_window_code)} → ${esc(a.to_window_code)}</strong> · ${esc(a.from_tug_code)} → ${esc(a.to_tug_code)} · 余量 ${esc(a.tide_reserve_min)} 分 · f(x) ${scoreText(a.score)}。泊位与拖轮预约已同时切换，改期指令由 ${esc(a.adopted_by)} 于 ${esc(portDate(a.adopted_at))} 发布。</p>
+      ${review ? `<p class="model-note">${esc(review.instruction)}</p>` : ''}
+      ${a.candidates?.length ? `<p class="model-note">采纳时的候选分数：</p><div class="table-wrap"><table><thead><tr><th>候选潮窗</th><th>余量</th><th>f(x)</th><th>可用拖轮 / 排不下</th><th>结论</th></tr></thead><tbody>${candidateRows({candidates: a.candidates})}</tbody></table></div>` : ''}</section>`;
+  }
+  const recommended = preview.candidates.find(row => row.recommended);
+  return `<section class="boundary retime">${open}
+    <p class="model-note">冻结输入不变，仅替换潮窗余量；采纳前原泊位与拖轮预约照留。</p>
+    <div class="table-wrap"><table><thead><tr><th>候选潮窗</th><th>余量</th><th>f(x)</th><th>可用拖轮 / 排不下</th><th>结论</th></tr></thead><tbody>${candidateRows(preview)}</tbody></table></div>
+    ${recommended && supervisor() ? form('retime-adopt', incident.code, `<h3>采纳推荐方案</h3>
+      <dl class="measurements"><div><dt>改到潮窗</dt><dd>${esc(recommended.window_code)}</dd></div><div><dt>操纵时段</dt><dd>${esc(portDate(recommended.eta))}–${esc(portDate(recommended.ends_at))}</dd></div><div><dt>拖轮</dt><dd>${esc(recommended.tugs[0] ?? '')}</dd></div></dl>
+      ${notes('改期指令', 'instruction', '写明接收引航席、改期潮窗与拖轮安排。')}
+      <input type="hidden" name="window_code" value="${esc(recommended.window_code)}">
+      <input type="hidden" name="tug_code" value="${esc(recommended.tugs[0] ?? '')}">
+      <input type="hidden" name="idempotency_key" value="${esc(nonce())}">`, '采纳改期并发布指令') : recommended ? '' : '<p class="warning">没有可同时排下泊位与拖轮的候选潮窗，请等待资源释放后重新试排。</p>'}</section>`;
 }
 
 function actionsFor(incident) {
@@ -54,7 +112,7 @@ function incidentDetail(incident) {
     ${boundary(incident.result)}
     ${incident.state === 'margin_review' ? '<p class="warning">本案处于间隔带。签署分类前无法发布调度指令。</p>' : ''}
     ${incident.decision ? `<p class="clearance">${incident.decided_by ? `主管 ${esc(incident.decided_by)} 签署` : '分类结果'} · <strong>${esc(decisions[incident.decision])}</strong>${incident.decision_reason ? ` · ${esc(incident.decision_reason)}` : ''}</p>` : ''}
-    ${actionsFor(incident)}${action ? `<a class="quiet link-block" href="#reviews/${esc(incident.code)}">打开调度复盘 →</a>` : ''}`;
+    ${retimePanel(incident)}${actionsFor(incident)}${action ? `<a class="quiet link-block" href="#reviews/${esc(incident.code)}">打开调度复盘 →</a>` : ''}`;
 }
 
 export function incidents(code) {

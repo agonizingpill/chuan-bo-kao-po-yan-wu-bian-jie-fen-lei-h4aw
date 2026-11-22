@@ -1,5 +1,5 @@
 import {api} from './api.js';
-import {incidents, reviews} from './incidents.js';
+import {incidents, loadRetime, reviews} from './incidents.js';
 import {resources, schedule} from './planning.js';
 import {roles, setSession, store} from './store.js';
 import {blank, esc, field} from './ui.js';
@@ -7,7 +7,7 @@ import {blank, esc, field} from './ui.js';
 const root = document.querySelector('#root');
 const notice = document.querySelector('#notice');
 const sections = {schedule: ['靠泊申请', schedule], resources: ['潮汐与拖轮', resources], incidents: ['延误边界', incidents], reviews: ['调度复盘', reviews]};
-const feedback = {register: '申请已登记', publish: '潮窗已发布', revise: '改期已保存', assign: '拖轮已预约', confirm: '靠泊已确认', report: '现场事件已入队', verify: '人工分类已签署', dispatch: '值班指令已发布', close: '复盘已结案', retry: '计算已重新入队'};
+const feedback = {register: '申请已登记', publish: '潮窗已发布', revise: '改期已保存', assign: '拖轮已预约', confirm: '靠泊已确认', report: '现场事件已入队', verify: '人工分类已签署', dispatch: '值班指令已发布', close: '复盘已结案', retry: '计算已重新入队', 'retime-adopt': '已采纳改期并发布指令'};
 let noticeTimer;
 let revision = 0;
 
@@ -52,6 +52,9 @@ async function refresh() {
     store.error = error.message;
   }
   render();
+  const [section, code] = route();
+  const incident = store.data?.incidents.find(item => item.code === code);
+  if (section === 'incidents' && code && incident?.decision === 'priority' && !store.retime[code]) loadRetime(code).then(render);
 }
 
 function toast(message) {
@@ -67,6 +70,13 @@ root.addEventListener('submit', async event => {
   if (!action) return;
   event.preventDefault();
   if (store.busy) return;
+  const retimeAdopt = action === 'retime-adopt';
+  if (retimeAdopt) {
+    const key = form.dataset.key;
+    const field = form.elements.idempotency_key;
+    if (key) field.value = key;
+    else form.dataset.key = field.value;
+  }
   store.busy = true;
   const button = form.querySelector('button[type="submit"]');
   const error = form.querySelector('.form-error');
@@ -77,6 +87,11 @@ root.addEventListener('submit', async event => {
     if (action === 'login') {
       setSession(await api.signIn(payload));
       history.replaceState(null, '', '#schedule');
+    } else if (retimeAdopt) {
+      const receipt = await api.adoptRetime(code, payload);
+      await loadRetime(code);
+      revision++;
+      toast(receipt.replayed ? '改期回执已确认，未重复改期或发令' : feedback[action]);
     } else {
       await (['register', 'publish', 'report'].includes(action) ? api[action](payload) : api[action](code, payload));
       const target = {register: 'schedule', publish: 'resources', report: 'incidents'}[action];
@@ -86,7 +101,17 @@ root.addEventListener('submit', async event => {
     await refresh();
   } catch (failure) {
     if (!store.session && action !== 'login') { store.error = failure.message; render(); }
-    else error.textContent = failure.message;
+    else {
+      error.textContent = failure.message;
+      if (retimeAdopt && ['RETIME_CONFLICT', 'ALREADY_ADOPTED', 'RETIME_NOT_ELIGIBLE'].includes(failure.code)) {
+        // A competing occupation landed first: re-trial windows, keep the original arrangement.
+        form.dataset.key = '';
+        await loadRetime(code);
+        revision++;
+        await refresh();
+        toast(`${failure.message} 原安排照留，候选已重新试排。`);
+      }
+    }
   } finally {
     store.busy = false;
     button.disabled = false;
@@ -94,7 +119,8 @@ root.addEventListener('submit', async event => {
 });
 
 root.addEventListener('click', event => {
-  const action = event.target.closest('[data-click]')?.dataset.click;
+  const target = event.target.closest('[data-click]');
+  const action = target?.dataset.click;
   if (action === 'logout' && !store.busy) {
     setSession(null);
     Object.assign(store, {history: [], error: ''});
@@ -103,6 +129,11 @@ root.addEventListener('click', event => {
     refresh();
   }
   if (action === 'refresh') refresh();
+  if (action === 'retime-preview' && !store.busy && target.dataset.code) {
+    const code = target.dataset.code;
+    target.disabled = true;
+    loadRetime(code).finally(() => { target.disabled = false; render(); });
+  }
 });
 
 root.addEventListener('change', event => {

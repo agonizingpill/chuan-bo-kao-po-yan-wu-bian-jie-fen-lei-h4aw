@@ -62,10 +62,16 @@ docker compose exec -T backend python -m scripts.seed_demo
 - worker 使用 MySQL 待处理状态和行锁领取案件，Redis 唤醒丢失时继续扫描。计算失败写入错误，主管可以沿用冻结摘要重试。成功后原模型建议持续保留，模型签署与人工签署有不同的记录字段。
 - 已确认的计划冻结。调度指令支持跟踪、待命、通知改期。改期指令是发给引航席的交班记录，现场后续排程由引航席另行协调。模型指标源于合成数据，现场岗位发布的动作和实绩通过表单登记。
 
+### 优先案件的改期预演与采纳
+
+优先处置案件在发布指令前，主管可在案件页面对本泊位已发布的潮窗逐个试排：冻结观测的其余三项输入保持不变，只把潮窗结束余量换成候选潮窗的余量，重新计算 `f(x)`。试排同时检查整段操纵是否落在潮窗内、吃水是否超限、同泊位已确认操纵是否重叠，以及各拖轮在该时段是否空闲。推荐的是「可同时排下泊位与拖轮、分数回到常规侧（`f(x) < 0` 且不在 `±0.30` 复核带）」中最早的一条，当前潮窗不会被推荐为改期目标。试排只读，采纳前原泊位与拖轮预约照留。
+
+采纳时系统在同一事务内释放原拖轮预约、按新时段新建预约、改写申请的潮窗与计划引航，并发布改期指令；三步全部成功或全部回滚。若写入前发现该时段已被其他确认作业或拖轮预约抢先占用，返回 `RETIME_CONFLICT`，原安排保留，页面自动重新试排。每次采纳带 `idempotency_key`：回执丢失后用同一编号重试返回 `replayed: true`，不会重复改期或二次发令；不同编号对同一案件再次采纳返回 `ALREADY_ADOPTED`。采纳记录（原/新潮窗与拖轮、余量、分数、采纳人、候选快照）随案件保存，供案件页面和 `/watch` 查询。
+
 ## 代码位置
 
 - `backend/src/models.py` 定义实体与数据库约束，`schemas.py` 定义操作数据。`main.py` 首次启动建表，`backend/migrations/README.md` 记录建库入口。
-- `planning.py` 处理资源预约、撤销与确认，`incidents.py` 处理案件、签署、调度与复盘。`routes.py` 接入 JWT 权限和事务。`main.py` 提供请求跟踪、响应策略及全局业务错误处理。
+- `planning.py` 处理资源预约、撤销与确认，`incidents.py` 处理案件、签署、调度与复盘，`retime.py` 处理优先案件的改期预演与采纳。`routes.py` 接入 JWT 权限和事务。`main.py` 提供请求跟踪、响应策略及全局业务错误处理。
 - `classifier.py` 和 `worker.py` 完成异步分类。`backend/scripts/seed_demo.py` 建立可演示班次。
 - `frontend/src/api.js` 对接接口，`store.js` 保存值班会话和班次数据，`planning.js` 和 `incidents.js` 提供业务页面，`ui.js` 复用状态标签、编辑表单、交班时间线和格式化函数。
 - 角色、申请状态、案件状态、分类和动作枚举在 `backend/src/models.py` 与 `frontend/src/store.js` 定义。后端 `schemas.py`、`security.py`、`routes.py`、`planning.py`、`incidents.py`、`worker.py` 与 `seed_demo.py` 消费上述枚举，分类器持久化两类预测标签。前端 `app.js`、`planning.js` 与 `incidents.js` 消费相同的 API 值。

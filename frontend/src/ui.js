@@ -5,6 +5,8 @@ export const portDate = value => value ? `${value.slice(0, 10)} ${clock(value)}`
 export const interval = (start, end) => `${portDate(start)} – ${start?.slice(0, 10) === end?.slice(0, 10) ? clock(end) : portDate(end)}`;
 export const timeInput = value => value?.slice(0, 16);
 export const selected = (a, b) => a === b ? 'selected' : '';
+export const nonce = () => globalThis.crypto?.randomUUID?.()
+  ?? Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
 
 export function pill(state, labels) {
   return `<span class="pill ${esc(state)}"><i></i>${esc(labels[state] || state)}</span>`;
@@ -36,6 +38,8 @@ export const eventNames = {
   INCIDENT_QUEUED: '登记现场延误', INCIDENT_REQUEUED: '重试模型', MODEL_FAILED: '模型计算失败', MODEL_CLASSIFIED: '模型分类',
   MARGIN_REVIEWED: '主管签署分类', MARGIN_REVIEW_REQUIRED: '间隔带未复核', ACTION_ISSUED: '发布调度指令', REVIEW_CLOSED: '完成复盘',
   PRIORITY_ACTION_REQUIRED: '处置级别不符', ALL_FAST_TIME: '复盘时间不符',
+  RETIME_ADOPTED: '采纳改期方案', RETIME_NOT_ELIGIBLE: '改期预演不适用', RETIME_CONFLICT: '改期时机被占用',
+  ALREADY_ADOPTED: '案件已采纳改期', IDEMPOTENCY_REUSED: '回执编号被占用',
 };
 
 export function journal(events) {

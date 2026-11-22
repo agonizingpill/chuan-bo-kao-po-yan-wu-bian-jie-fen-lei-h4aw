@@ -1,6 +1,6 @@
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, text
+from sqlalchemy import CheckConstraint, DateTime, Enum, Float, ForeignKey, Index, Integer, JSON, String, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, mapped_column
 
 
@@ -136,6 +136,31 @@ class DispatchReview(Base):
     outcome = mapped_column(String(300))
     closed_by = mapped_column(ForeignKey('users.username'))
     closed_at = mapped_column(DateTime)
+
+
+class RetimeAdoption(Base):
+    __tablename__ = 'retime_adoptions'
+    __table_args__ = (
+        UniqueConstraint('idempotency_key', name='retime_idempotency_key'),
+        CheckConstraint('to_eta >= from_eta AND maneuver_minutes > 0'),
+    )
+    id = mapped_column(Integer, primary_key=True)
+    idempotency_key = mapped_column(String(64), nullable=False)
+    incident_code = mapped_column(ForeignKey('delay_incidents.code'), nullable=False, unique=True)
+    request_code = mapped_column(ForeignKey('berth_requests.code'), nullable=False)
+    from_window_code = mapped_column(String(32), nullable=False)
+    to_window_code = mapped_column(ForeignKey('tide_windows.code'), nullable=False)
+    from_eta = mapped_column(DateTime, nullable=False)
+    to_eta = mapped_column(DateTime, nullable=False)
+    maneuver_minutes = mapped_column(Integer, nullable=False)
+    from_tug_code = mapped_column(ForeignKey('tugs.code'), nullable=False)
+    to_tug_code = mapped_column(ForeignKey('tugs.code'), nullable=False)
+    tide_reserve_min = mapped_column(Float, nullable=False)
+    score = mapped_column(Float, nullable=False)
+    band = mapped_column(Float, nullable=False)
+    candidates = mapped_column(JSON, nullable=False, default=list)
+    adopted_by = mapped_column(ForeignKey('users.username'), nullable=False)
+    adopted_at = mapped_column(DateTime, nullable=False)
 
 
 class Audit(Base):

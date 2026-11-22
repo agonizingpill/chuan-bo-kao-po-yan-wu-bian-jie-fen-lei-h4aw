@@ -14,7 +14,10 @@ async function request(path, method = 'GET', data) {
     if (response.status === 401 && store.session) setSession(null);
     const detail = content.detail;
     const message = Array.isArray(detail) ? `请核对字段 ${detail[0]?.loc.at(-1) ?? ''} 的格式或取值。` : detail;
-    throw new Error(message || '服务暂时不可用，请稍后重试。');
+    const failure = new Error(message || '服务暂时不可用，请稍后重试。');
+    failure.code = content.code;
+    failure.status = response.status;
+    throw failure;
   }
   return content;
 }
@@ -33,4 +36,6 @@ export const api = {
   dispatch: (code, data) => request(`/delay-incidents/${encodeURIComponent(code)}/dispatch`, 'POST', data),
   close: (code, data) => request(`/delay-incidents/${encodeURIComponent(code)}/close`, 'POST', data),
   retry: code => request(`/delay-incidents/${encodeURIComponent(code)}/retry`, 'POST'),
+  retimePreview: code => request(`/delay-incidents/${encodeURIComponent(code)}/retime`),
+  adoptRetime: (code, data) => request(`/delay-incidents/${encodeURIComponent(code)}/retime`, 'POST', data),
 };
